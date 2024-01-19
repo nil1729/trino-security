@@ -13,14 +13,15 @@ services:
           echo "Set the TRINO_PASSWORD environment variable in the .env file";
           exit 1;
         fi;
+        rm -f /etc/extra/trino-config/password.db;
         htpasswd -b -B -C 10 -c /etc/extra/trino-config/password.db ${TRINO_USERNAME} ${TRINO_PASSWORD};
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout nginx.key -out nginx.crt -subj "/C=US/ST=California/L=San Francisco/O=MyOrg/OU=MyUnit/CN=localhost" -reqexts SAN -extensions SAN -config <(echo "[req]"; echo "distinguished_name=req"; echo "[SAN]"; echo "subjectAltName=DNS:localhost,DNS:proxy,DNS:trino-coordinator,DNS:playground") -addext "basicConstraints=CA:TRUE";
-        echo "checking for proxy certs...";
-        until curl -s -o /dev/null -w '%{http_code}' --cacert /etc/nginx/certs/nginx.crt https://proxy/v1/status | grep '200'; do echo "check failed!" && sleep 1; done;
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout nginx.key -out nginx.crt -subj "/C=US/ST=California/L=San Francisco/O=MyOrg/OU=MyUnit/CN=localhost" -reqexts SAN -extensions SAN -config <(echo "[req]"; echo "distinguished_name=req"; echo "[SAN]"; echo "subjectAltName=DNS:localhost,DNS:trino-proxy,DNS:trino-coordinator,DNS:playground") -addext "basicConstraints=CA:TRUE";
+        echo "waiting for trino proxy availability";
+        until curl -s -o /dev/null -w '%{http_code}' --cacert /etc/nginx/certs/nginx.crt https://trino-proxy/v1/status | grep '200'; do echo "check failed!" && sleep 1; done;
         echo "all done!";
       '
     volumes:
-      - proxy-certs:/etc/nginx/certs
+      - ca-certs:/etc/nginx/certs
       - ${PWD}/extra-config:/etc/extra/trino-config
     healthcheck:
       test: ['CMD-SHELL', '[ -f /etc/nginx/certs/nginx.crt ] && [ -f /etc/nginx/certs/nginx.key ]']
@@ -30,13 +31,15 @@ services:
     networks:
       - trino-internal
 
-  proxy:
+  trino-proxy:
     image: nginx
+    container_name: trino-proxy
+    hostname: trino-proxy
     ports:
       - '443:443'
     volumes:
-      - ${PWD}/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
-      - proxy-certs:/etc/nginx/certs:ro
+      - ${PWD}/trino-proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ca-certs:/etc/nginx/certs:ro
     depends_on:
       setup:
         condition: service_healthy
@@ -62,14 +65,22 @@ services:
     hostname: trino-coordinator
     ports:
       - '8888:8080'
-    env_file:
-      - ${PWD}/docker.env
     volumes:
       - ${PWD}/coordinator/config.properties:/etc/trino/config.properties:ro
       - ${PWD}/coordinator/password-authenticator.properties:/etc/trino/password-authenticator.properties:ro
       - ${PWD}/extra-config:/etc/extra/trino-config:ro
     networks:
       - trino-internal
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/v1/status | grep '200'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   trino-worker:
     image: trinodb/trino:433
@@ -78,8 +89,6 @@ services:
         condition: service_healthy
     deploy:
       replicas: 1
-    env_file:
-      - ${PWD}/docker.env
     volumes:
       - ${PWD}/worker/config.properties:/etc/trino/config.properties:ro
     networks:
@@ -93,15 +102,15 @@ services:
     hostname: playground
     command: /usr/local/bin/docker-entrypoint.sh
     depends_on:
-      proxy:
+      trino-proxy:
         condition: service_healthy
     networks:
       - www
     volumes:
-      - proxy-certs:/usr/local/share/proxy/certs
+      - ca-certs:/usr/local/share/proxy/certs
 
 volumes:
-  proxy-certs:
+  ca-certs:
 
 networks:
   trino-internal:
