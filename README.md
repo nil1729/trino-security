@@ -2,25 +2,25 @@
 
 This github repository describes how to implement authentication and authorization for Trino cluster.
 
-### Trino Security architecture (docker)
+### Trino Security Architecture (Docker)
 
 ![Alt text](architecture.png)
 
-### running Trino Cluster locally
+### Running Trino Cluster locally
 
-#### running Trino Cluster with docker compose
+#### Running Trino Cluster with Docker Compose
 
 ```bash
 docker-compose up -d
 ```
 
-#### executing query with Trino CLI
+#### Executing query with Trino CLI
 
 ```bash
 docker compose exec playground trino --server https://trino-proxy --user trino --password --insecure
 ```
 
-### recommended reading
+### Recommended Reading
 
 - [Trino Security](https://trino.io/docs/current/security/overview.html)
 - [Trino TLS Configuration](https://trino.io/docs/current/security/tls.html)
