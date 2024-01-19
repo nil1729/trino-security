@@ -1,14 +1,19 @@
 version: '3.8'
 
 services:
-  proxy-setup:
+  setup:
     build:
-      context: ./proxy-setup
+      context: ./setup
       dockerfile: Dockerfile
-    container_name: proxy-setup
-    hostname: proxy-setup
+    container_name: setup
+    hostname: setup
     command: >
       sh -c '
+        if [ x${TRINO_PASSWORD} == x ]; then
+          echo "Set the TRINO_PASSWORD environment variable in the .env file";
+          exit 1;
+        fi;
+        htpasswd -b -B -C 10 -c /etc/extra/trino-config/password.db ${TRINO_USERNAME} ${TRINO_PASSWORD};
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout nginx.key -out nginx.crt -subj "/C=US/ST=California/L=San Francisco/O=MyOrg/OU=MyUnit/CN=localhost" -reqexts SAN -extensions SAN -config <(echo "[req]"; echo "distinguished_name=req"; echo "[SAN]"; echo "subjectAltName=DNS:localhost,DNS:proxy,DNS:trino-coordinator,DNS:playground") -addext "basicConstraints=CA:TRUE";
         echo "checking for proxy certs...";
         until curl -s -o /dev/null -w '%{http_code}' --cacert /etc/nginx/certs/nginx.crt https://proxy/v1/status | grep '200'; do echo "check failed!" && sleep 1; done;
@@ -16,6 +21,7 @@ services:
       '
     volumes:
       - proxy-certs:/etc/nginx/certs
+      - ${PWD}/extra-config:/etc/extra/trino-config
     healthcheck:
       test: ['CMD-SHELL', '[ -f /etc/nginx/certs/nginx.crt ] && [ -f /etc/nginx/certs/nginx.key ]']
       interval: 1s
@@ -29,10 +35,10 @@ services:
     ports:
       - '443:443'
     volumes:
-      - ${PWD}/proxy/nginx.conf:/etc/nginx/nginx.conf
-      - proxy-certs:/etc/nginx/certs
+      - ${PWD}/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - proxy-certs:/etc/nginx/certs:ro
     depends_on:
-      proxy-setup:
+      setup:
         condition: service_healthy
       trino-coordinator:
         condition: service_healthy
@@ -59,9 +65,9 @@ services:
     env_file:
       - ${PWD}/docker.env
     volumes:
-      - ${PWD}/coordinator/config.properties:/etc/trino/config.properties
-      - ${PWD}/coordinator/password-authenticator.properties:/etc/trino/password-authenticator.properties
-      - ${PWD}/extra-config:/etc/extra/trino-config
+      - ${PWD}/coordinator/config.properties:/etc/trino/config.properties:ro
+      - ${PWD}/coordinator/password-authenticator.properties:/etc/trino/password-authenticator.properties:ro
+      - ${PWD}/extra-config:/etc/extra/trino-config:ro
     networks:
       - trino-internal
 
@@ -75,7 +81,7 @@ services:
     env_file:
       - ${PWD}/docker.env
     volumes:
-      - ${PWD}/worker/config.properties:/etc/trino/config.properties
+      - ${PWD}/worker/config.properties:/etc/trino/config.properties:ro
     networks:
       - trino-internal
 
